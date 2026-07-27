@@ -8,12 +8,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use defmt_parser::Level;
 use object::{Object, ObjectSymbol};
 use probe_rs::{Session, rtt::UpChannel};
 
 use crate::{
-    defmt::{DefmtFrame, DefmtThreadCommunication},
+    defmt::{DefmtFrame, DefmtThreadCommunication, log_defmt_msg},
     probe::{AttachedProbe, ProbeId, ProbeState},
 };
 
@@ -254,41 +253,6 @@ pub struct ConnectionError {
 }
 
 pub enum ConnectionErrorKind {}
-
-fn log_defmt_msg(msg: &DefmtFrame) {
-    let (module, file, line) = msg.location.as_ref().map_or((None, None, None), |loc| {
-        (Some(loc.module.as_str()), loc.file.to_str(), Some(loc.line))
-    });
-
-    // see: https://github.com/rust-lang/rust/pull/140748
-    // & https://github.com/rust-lang/rust/issues/92698#issuecomment-1142146879
-    #[allow(clippy::redundant_closure_call)]
-    (|frame: &DefmtFrame, args: std::fmt::Arguments<'_>| {
-        let log_record = log::Record::builder()
-            .level(
-                frame
-                    .level
-                    .map(|lvl| match lvl {
-                        Level::Trace => log::Level::Trace,
-                        Level::Debug => log::Level::Debug,
-                        Level::Info => log::Level::Info,
-                        Level::Warn => log::Level::Warn,
-                        Level::Error => log::Level::Error,
-                    })
-                    .unwrap_or(log::Level::Trace),
-            )
-            .args(args)
-            .module_path(module)
-            .file(file)
-            .line(line.map(|l| {
-                l.try_into()
-                    .expect("Line number must be convertable to u32")
-            }))
-            .target(module.unwrap_or("target"))
-            .build();
-        log::logger().log(&log_record);
-    })(msg, format_args!("{}", msg.message));
-}
 
 /// in the Cortex-M ISA, routines (functions) are always 2-byte aligned but
 // in the ELF file; and machine code, they have the bit 0, the "thumb bit"

@@ -4,11 +4,11 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    thread::JoinHandle,
     time::Duration,
 };
 
 use defmt_decoder::{Frame, Location};
+use defmt_parser::Level;
 use probe_rs::Session;
 
 /// Like `defmt_decoder::Frame` but without lifetimes
@@ -260,4 +260,39 @@ fn read_defmt_msgs(
     done_tx.send(()).ok();
 
     Ok(())
+}
+
+pub(crate) fn log_defmt_msg(msg: &DefmtFrame) {
+    let (module, file, line) = msg.location.as_ref().map_or((None, None, None), |loc| {
+        (Some(loc.module.as_str()), loc.file.to_str(), Some(loc.line))
+    });
+
+    // see: https://github.com/rust-lang/rust/pull/140748
+    // & https://github.com/rust-lang/rust/issues/92698#issuecomment-1142146879
+    #[allow(clippy::redundant_closure_call)]
+    (|frame: &DefmtFrame, args: std::fmt::Arguments<'_>| {
+        let log_record = log::Record::builder()
+            .level(
+                frame
+                    .level
+                    .map(|lvl| match lvl {
+                        Level::Trace => log::Level::Trace,
+                        Level::Debug => log::Level::Debug,
+                        Level::Info => log::Level::Info,
+                        Level::Warn => log::Level::Warn,
+                        Level::Error => log::Level::Error,
+                    })
+                    .unwrap_or(log::Level::Trace),
+            )
+            .args(args)
+            .module_path(module)
+            .file(file)
+            .line(line.map(|l| {
+                l.try_into()
+                    .expect("Line number must be convertable to u32")
+            }))
+            .target(module.unwrap_or("target"))
+            .build();
+        log::logger().log(&log_record);
+    })(msg, format_args!("{}", msg.message));
 }
