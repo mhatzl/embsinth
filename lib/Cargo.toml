@@ -1,0 +1,15 @@
+[package]
+name = "embsinth"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+object = "0.39.1"
+probe-rs = "0.32.0"
+defmt-decoder = "1.1.0"
+defmt-parser = "1.0.0"
+dotenvy = "0.15.7"
+rzcobs = "0.1.2"
+log = "0.4.33"
+thiserror = "2.0.19"
+anyhow = "1.0.104"
