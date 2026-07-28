@@ -41,7 +41,7 @@ impl Drop for Connection {
         crate::probe::PROBE_STATES
             .lock()
             .expect("Probe state map has been poisoned in some thread")
-            .entry(self.probe_id)
+            .entry(self.probe_id.clone())
             .and_modify(|s| *s = ProbeState::Free);
     }
 }

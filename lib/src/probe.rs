@@ -16,15 +16,28 @@ use crate::connection::Connection;
 
 const PROBE_RS_TIMEOUT: Duration = Duration::from_millis(100);
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct ProbeId {
     vid: u16,
     pid: u16,
+    ser_nr: Option<String>,
 }
 
 impl ProbeId {
     pub fn new(vid: u16, pid: u16) -> Self {
-        Self { vid, pid }
+        Self {
+            vid,
+            pid,
+            ser_nr: None,
+        }
+    }
+
+    pub fn with_serial_nr(vid: u16, pid: u16, ser_nr: impl Into<String>) -> Self {
+        Self {
+            vid,
+            pid,
+            ser_nr: Some(ser_nr.into()),
+        }
     }
 
     pub fn attach_under_reset(self, chip: impl Into<String>) -> Result<AttachedProbe, ProbeError> {
@@ -63,10 +76,14 @@ impl AttachedProbe {
 
         let mut found = None;
         for probe in FOUND_PROBES.deref() {
-            if probe.vendor_id == probe_id.vid && probe.product_id == probe_id.pid {
+            if probe.vendor_id == probe_id.vid
+                && probe.product_id == probe_id.pid
+                && let Some(ser_nr) = &probe_id.ser_nr
+                && Some(ser_nr) == probe.serial_number.as_ref()
+            {
                 assert!(
                     found.is_none(),
-                    "found more than one probe with matching vendor and product ID"
+                    "found more than one probe with matching vendor ID, product ID and optional serial number"
                 );
 
                 found = Some(probe);
@@ -94,7 +111,7 @@ impl AttachedProbe {
                     }
                 }
                 None => {
-                    probe_states.insert(probe_id, ProbeState::Opened);
+                    probe_states.insert(probe_id.clone(), ProbeState::Opened);
                     true
                 }
             }
@@ -106,13 +123,25 @@ impl AttachedProbe {
             });
         }
 
+        eprintln!("Attaching to: {}", probe);
+
         let chip = chip.into();
         for _ in 1..=MAX_PROBE_RETRIES {
             match probe.open() {
-                Ok(probe) => {
-                    let session = probe
-                        .attach_under_reset(&chip, Permissions::default())
-                        .expect("could not attach");
+                Ok(mut probe) => {
+                    let _ = probe.set_speed(1_000); // 1 MHz
+
+                    let mut session = probe
+                        .attach(&chip, Permissions::default().allow_erase_all())
+                        .expect("could not attach probe");
+
+                    {
+                        let _ = session
+                            .core(0)
+                            .expect("Failed to get core 0")
+                            .reset_and_halt(Duration::from_secs(2));
+                    }
+
                     return Ok(Self {
                         id: probe_id,
                         chip,
@@ -133,9 +162,11 @@ impl AttachedProbe {
 
     pub fn flash_once_and_connect(
         mut self,
-        binary_file: PathBuf,
+        binary_file: impl Into<PathBuf>,
     ) -> Result<Connection, ProbeError> {
         static FLASHED: Once = Once::new();
+
+        let binary_file = binary_file.into();
 
         if !binary_file.exists() {
             return Err(ProbeError {
@@ -151,10 +182,19 @@ impl AttachedProbe {
 
         enable_vector_catch(&mut self.session);
 
+        {
+            let _ = self.session.core(0).expect("Failed to get Core 0").reset();
+        }
+
         Ok(Connection::new(self, binary_file))
     }
 
-    pub fn flash_and_connect(mut self, binary_file: PathBuf) -> Result<Connection, ProbeError> {
+    pub fn flash_and_connect(
+        mut self,
+        binary_file: impl Into<PathBuf>,
+    ) -> Result<Connection, ProbeError> {
+        let binary_file = binary_file.into();
+
         if !binary_file.exists() {
             return Err(ProbeError {
                 kind: ProbeErrorKind::NonExistingBinaryFile,

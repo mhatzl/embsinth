@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+embsinth-procm = { path = "../procm" }
 object = "0.39.1"
 probe-rs = "0.32.0"
 defmt-decoder = "1.1.0"

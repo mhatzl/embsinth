@@ -492,6 +492,7 @@ dependencies = [
  "defmt-decoder",
  "defmt-parser",
  "dotenvy",
+ "embsinth-procm",
  "env_logger",
  "log",
  "object 0.39.1",
@@ -506,6 +507,11 @@ dependencies = [
 [[package]]
 name = "embsinth-procm"
 version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "encoding_rs"
