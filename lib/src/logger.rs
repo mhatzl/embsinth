@@ -2,10 +2,7 @@ use std::{
     fs::OpenOptions,
     io::Write,
     path::PathBuf,
-    sync::{
-        LazyLock, Mutex, Once,
-        atomic::{self, AtomicBool},
-    },
+    sync::{LazyLock, Mutex, Once},
     time::Duration,
 };
 
@@ -56,8 +53,6 @@ pub enum PanicHandling {
     FailOnPanic,
 }
 
-static TEST_CASE_ACTIVE: AtomicBool = AtomicBool::new(false);
-
 /// Initializes a logger and accompanying logfile per running test case to capture mantra traces.
 pub fn test_case_start(
     test_case_name: &'static str,
@@ -65,13 +60,6 @@ pub fn test_case_start(
     line: u32,
     panic_handling: PanicHandling,
 ) {
-    while !TEST_CASE_ACTIVE.swap(true, atomic::Ordering::Relaxed) {
-        std::thread::sleep(Duration::from_secs(5));
-        // panic!(
-        //     "Embedded integration tests must be run in sequence! Limit tests to only one thread"
-        // );
-    }
-
     static ONCE: Once = Once::new();
 
     let test_case_logpath = get_test_case_logpath(test_case_name);
@@ -94,7 +82,17 @@ pub fn test_case_start(
         )
     });
 
-    *CURR_TEST_CASE_NAME.lock().unwrap() = Some(test_case_name);
+    loop {
+        {
+            let mut curr_test_name = CURR_TEST_CASE_NAME.lock().unwrap();
+            if curr_test_name.is_none() {
+                *curr_test_name = Some(test_case_name);
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_secs(5));
+    }
+
     match panic_handling {
         PanicHandling::ShouldPanic(expected_panic) => {
             *CURR_EXPECTED_PANIC_MSG.lock().unwrap() = Some(expected_panic);
@@ -161,8 +159,6 @@ pub fn test_case_end() {
     .expect("Couldn't append log entries to logfile.");
 
     *CURR_TEST_CASE_NAME.lock().unwrap() = None;
-
-    TEST_CASE_ACTIVE.store(false, atomic::Ordering::Relaxed);
 }
 
 /// Returns the absolute path to the logfile of a test case.

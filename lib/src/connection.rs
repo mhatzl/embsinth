@@ -39,13 +39,20 @@ impl Drop for Connection {
         // bg thread has been terminated by us so don't panic after we emptied the channel
         self.panic_on_disconnected_error = false;
         self.flush_defmt_msgs(false);
+
+        log::warn!("Dropping connection to probe: {:?}", self.probe_id);
+
         // Free the selected probe so it may be reused for new connections
         // The probe session is
-        crate::probe::PROBE_STATES
-            .lock()
-            .expect("Probe state map has been poisoned in some thread")
-            .entry(self.probe_id.clone())
-            .and_modify(|s| *s = ProbeState::Free);
+        {
+            let mut states = crate::probe::PROBE_STATES
+                .lock()
+                .expect("Probe state map has been poisoned in some thread");
+            let state = states
+                .get_mut(&self.probe_id)
+                .expect("Probe ID must have been inserted when aquiring");
+            *state = ProbeState::Free;
+        }
     }
 }
 
@@ -90,7 +97,7 @@ impl Connection {
     }
 
     pub fn close(self) {
-        drop(self)
+        drop(self);
     }
 
     pub fn probe_id(&self) -> &ProbeId {

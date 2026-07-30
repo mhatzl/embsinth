@@ -97,24 +97,33 @@ impl AttachedProbe {
         };
 
         let probe_aquired = {
-            let mut probe_states = PROBE_STATES
-                .lock()
-                .expect("Probe state map has been poisoned in some thread");
+            let mut aquired = false;
+            for _ in 0..5 {
+                {
+                    let mut probe_states = PROBE_STATES
+                        .lock()
+                        .expect("Probe state map has been poisoned in some thread");
 
-            match probe_states.get_mut(&probe_id) {
-                Some(state) => {
-                    if state == &ProbeState::Free {
-                        *state = ProbeState::Taken;
-                        true
-                    } else {
-                        false
+                    match probe_states.get_mut(&probe_id) {
+                        Some(state) => {
+                            if state == &ProbeState::Free {
+                                *state = ProbeState::Taken;
+                                aquired = true;
+                                break;
+                            }
+                        }
+                        None => {
+                            probe_states.insert(probe_id.clone(), ProbeState::Taken);
+                            aquired = true;
+                            break;
+                        }
                     }
                 }
-                None => {
-                    probe_states.insert(probe_id.clone(), ProbeState::Taken);
-                    true
-                }
+
+                std::thread::sleep(Duration::from_secs(5));
             }
+
+            aquired
         };
 
         if !probe_aquired {
