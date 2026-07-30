@@ -9,7 +9,10 @@ use std::{
 };
 
 use object::{Object, ObjectSymbol};
-use probe_rs::{Session, rtt::UpChannel};
+use probe_rs::{
+    Core, Session,
+    rtt::{ChannelMode, UpChannel},
+};
 
 use crate::{
     defmt::{DefmtFrame, DefmtThreadCommunication, log_defmt_msg},
@@ -47,12 +50,25 @@ impl Drop for Connection {
 }
 
 impl Connection {
-    pub(crate) fn new(probe: AttachedProbe, binary_file: PathBuf) -> Self {
+    pub(crate) fn new(mut probe: AttachedProbe, binary_file: PathBuf) -> Self {
+        let binary_bytes = std::fs::read(&binary_file).expect("Failed to read binary bytes");
+
+        let upchannel = rtt_upchannel(&mut probe.session, &binary_bytes);
+
         let (msg_tx, msg_rx) = std::sync::mpsc::channel();
         let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
         let shared = std::sync::Arc::new(DefmtThreadCommunication::new(probe.session));
 
-        crate::defmt::spawn_defmt_thread(binary_file, &shared, msg_tx, done_tx);
+        crate::defmt::spawn_defmt_thread(
+            std::thread::current(),
+            binary_bytes,
+            &shared,
+            msg_tx,
+            done_tx,
+            upchannel,
+        );
+
+        // std::thread::park();
 
         Self {
             probe_id: probe.id,
@@ -62,6 +78,15 @@ impl Connection {
             done_rx,
             panic_on_disconnected_error: true,
         }
+    }
+
+    pub fn start(&mut self) {
+        let mut session = self
+            .shared
+            .session
+            .lock()
+            .expect("Session poisoned by bad log extraction");
+        let _ = session.core(0).expect("Failed to access Core 0").run();
     }
 
     pub fn close(self) {
@@ -106,12 +131,9 @@ impl Connection {
     ///
     /// Panics if the core has reached a `HardFault` and cannot emit more frames
     pub fn next_msg(&mut self) -> DefmtFrame {
-        let msg = self
-            .msg_rx
+        self.msg_rx
             .recv()
-            .expect("Frame receiver disconnected. Likely due to hard fault.");
-        log_defmt_msg(&msg);
-        msg
+            .expect("Frame receiver disconnected. Likely due to hard fault.")
     }
 
     /// Reads a `defmt` message from the RTT buffer without blocking
@@ -120,8 +142,7 @@ impl Connection {
     // can't use `StreamDecoder` because lifetimes (would require a self-referential struct) so
     // re-do the `StreamDecoder` logic here
     pub fn try_next_msg(&mut self) -> Option<DefmtFrame> {
-        let msg_opt = self
-            .msg_rx
+        self.msg_rx
             .try_recv()
             .inspect_err(|err| {
                 if err == &std::sync::mpsc::TryRecvError::Disconnected
@@ -130,13 +151,7 @@ impl Connection {
                     panic!("Defmt background thread disconnected. Likely due to a panic.")
                 }
             })
-            .ok();
-
-        if let Some(frame) = &msg_opt {
-            log_defmt_msg(frame);
-        }
-
-        msg_opt
+            .ok()
     }
 
     /// Reads next defmt messages until either the given condition or timeout have been reached
@@ -204,7 +219,7 @@ pub(crate) fn has_hard_faulted(core: &mut probe_rs::Core) -> bool {
     )
 }
 
-pub(crate) fn rtt_upchannel(session: &mut Session, binary_bytes: &[u8]) -> UpChannel {
+pub(crate) fn rtt_upchannel(session: &mut Session, binary_bytes: &[u8]) -> RttActiveUpChannel {
     let mut core = session.core(0).expect("could not select core 0");
     core.reset_and_halt(Duration::from_secs(5))
         .expect("could not reset device");
@@ -213,7 +228,7 @@ pub(crate) fn rtt_upchannel(session: &mut Session, binary_bytes: &[u8]) -> UpCha
     // target initializing. we put a breakpoint on the symbol `main` and run the app until
     // that point  when `main` is reached, static variables, including the RTT block, have
     // all been initialized
-    core.set_hw_breakpoint(clear_thumb_bit(get_symbol_address(&binary_bytes, "main")))
+    core.set_hw_breakpoint(clear_thumb_bit(get_symbol_address(binary_bytes, "main")))
         .expect("could not set breakpoint");
     core.run().expect("could not resume execution");
     core.wait_for_core_halted(Duration::from_secs(5))
@@ -228,7 +243,7 @@ pub(crate) fn rtt_upchannel(session: &mut Session, binary_bytes: &[u8]) -> UpCha
 
     // attach to already initialized RTT block
     let mut rtt =
-        probe_rs::rtt::Rtt::attach_at(&mut core, get_symbol_address(&binary_bytes, "_SEGGER_RTT"))
+        probe_rs::rtt::Rtt::attach_at(&mut core, get_symbol_address(binary_bytes, "_SEGGER_RTT"))
             .expect("did not find RTT block");
 
     assert_eq!(
@@ -237,15 +252,40 @@ pub(crate) fn rtt_upchannel(session: &mut Session, binary_bytes: &[u8]) -> UpCha
         "expected exactly one RTT up channel"
     );
 
-    let upchannel = rtt.up_channels.pop().unwrap();
-    upchannel
-        .set_mode(&mut core, probe_rs::rtt::ChannelMode::BlockIfFull)
+    let up_channel = rtt.up_channels.pop().unwrap();
+
+    let mut active_channel = RttActiveUpChannel::new(up_channel);
+
+    log::info!(
+        "Defmt channel Size={}, Mode={:?}, name={:?}",
+        active_channel.up_channel.buffer_size(),
+        active_channel.up_channel.mode(&mut core),
+        active_channel.up_channel.name()
+    );
+
+    core.clear_all_hw_breakpoints()
+        .expect("Failed to clear hw breakpoints");
+    core.run().expect("Failed to continue execution");
+
+    active_channel
+        .change_mode(&mut core, ChannelMode::BlockIfFull)
         .expect("could not change RTT channel mode");
 
-    // resume execution
-    core.run().expect("could not resume execution");
+    active_channel
 
-    upchannel
+    // upchannel
+    //     .set_mode(&mut core, probe_rs::rtt::ChannelMode::BlockIfFull)
+    //     .expect("could not change RTT channel mode");
+
+    // log::info!(
+    //     "RTT Mode: {:?}",
+    //     upchannel.mode(&mut core).expect("RTT Mode has been set")
+    // );
+
+    // // resume execution
+    // // core.run().expect("could not resume execution");
+
+    // upchannel
 }
 
 pub struct ConnectionError {
@@ -260,4 +300,70 @@ pub enum ConnectionErrorKind {}
 // expects the thumb bit to be cleared so we do that here.
 fn clear_thumb_bit(addr: u64) -> u64 {
     addr & (!1u64)
+}
+
+#[derive(Debug)]
+pub(crate) struct RttActiveUpChannel {
+    up_channel: UpChannel,
+    rtt_buffer: Box<[u8]>,
+    bytes_buffered: usize,
+
+    /// If set, the original mode of the channel before we first changed it. Upon exit we should do
+    /// our best to restore the original mode.
+    original_mode: Option<ChannelMode>,
+}
+
+impl RttActiveUpChannel {
+    pub fn new(up_channel: UpChannel) -> Self {
+        Self {
+            rtt_buffer: vec![0; up_channel.buffer_size().max(1)].into_boxed_slice(),
+            bytes_buffered: 0,
+            up_channel,
+            original_mode: None,
+        }
+    }
+
+    pub fn change_mode(&mut self, core: &mut Core, mode: ChannelMode) -> Result<(), anyhow::Error> {
+        if self.original_mode.is_none() {
+            self.original_mode = Some(self.up_channel.mode(core)?);
+        }
+
+        Ok(self.up_channel.set_mode(core, mode)?)
+    }
+
+    pub fn channel_name(&self) -> String {
+        self.up_channel
+            .name()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("Unnamed RTT up channel - {}", self.up_channel.number()))
+    }
+
+    /// Returns the buffer size in bytes. Note that the usable size is one byte less due to how the
+    /// ring buffer is implemented.
+    pub fn buffer_size(&self) -> usize {
+        self.up_channel.buffer_size()
+    }
+
+    pub fn number(&self) -> u32 {
+        self.up_channel.number() as u32
+    }
+
+    /// Reads available channel data into the internal buffer.
+    pub fn poll(&mut self, core: &mut Core) -> Result<(), anyhow::Error> {
+        self.bytes_buffered = self.up_channel.read(core, self.rtt_buffer.as_mut())?;
+        Ok(())
+    }
+
+    /// Returns the buffered data.
+    pub fn buffered_data(&self) -> &[u8] {
+        &self.rtt_buffer[..self.bytes_buffered]
+    }
+
+    /// Clean up temporary changes made to the channel.
+    pub fn clean_up(&mut self, core: &mut Core) -> Result<(), anyhow::Error> {
+        if let Some(mode) = self.original_mode.take() {
+            self.up_channel.set_mode(core, mode)?;
+        }
+        Ok(())
+    }
 }

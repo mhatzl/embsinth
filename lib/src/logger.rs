@@ -1,9 +1,12 @@
 use std::{
-    cell::Cell,
     fs::OpenOptions,
     io::Write,
     path::PathBuf,
-    sync::{LazyLock, Once},
+    sync::{
+        LazyLock, Mutex, Once,
+        atomic::{self, AtomicBool},
+    },
+    time::Duration,
 };
 
 use relative_path::RelativePathBuf;
@@ -28,12 +31,12 @@ pub static LOG_OUTPUT_BASE_PATH: std::sync::LazyLock<PathBuf> = std::sync::LazyL
 
 static ENV_LOGGER: LazyLock<env_logger::Logger> = LazyLock::new(|| env_logger::builder().build());
 
-thread_local! {
-    /// Thread local static used to store the currently active test case per thread.
-    static CURR_TEST_CASE_NAME: Cell<Option<&'static str>> = const { Cell::new(None) };
-    /// Thread local static used to store the currently active test case per thread.
-    static CURR_EXPECTED_PANIC_MSG: Cell<Option<ExpectedPanicMsg>> = const { Cell::new(None) };
-}
+/// Thread local static used to store the currently active test case per thread.
+static CURR_TEST_CASE_NAME: LazyLock<Mutex<Option<&'static str>>> =
+    LazyLock::new(|| Mutex::new(None));
+/// Thread local static used to store the currently active test case per thread.
+static CURR_EXPECTED_PANIC_MSG: LazyLock<Mutex<Option<ExpectedPanicMsg>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 /// Defines the matching behavior for tests marked with `#[should_panic]`.
 #[derive(Debug, Clone, Copy)]
@@ -53,6 +56,8 @@ pub enum PanicHandling {
     FailOnPanic,
 }
 
+static TEST_CASE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
 /// Initializes a logger and accompanying logfile per running test case to capture mantra traces.
 pub fn test_case_start(
     test_case_name: &'static str,
@@ -60,6 +65,13 @@ pub fn test_case_start(
     line: u32,
     panic_handling: PanicHandling,
 ) {
+    while !TEST_CASE_ACTIVE.swap(true, atomic::Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_secs(5));
+        // panic!(
+        //     "Embedded integration tests must be run in sequence! Limit tests to only one thread"
+        // );
+    }
+
     static ONCE: Once = Once::new();
 
     let test_case_logpath = get_test_case_logpath(test_case_name);
@@ -82,12 +94,12 @@ pub fn test_case_start(
         )
     });
 
-    CURR_TEST_CASE_NAME.set(Some(test_case_name));
+    *CURR_TEST_CASE_NAME.lock().unwrap() = Some(test_case_name);
     match panic_handling {
         PanicHandling::ShouldPanic(expected_panic) => {
-            CURR_EXPECTED_PANIC_MSG.set(Some(expected_panic))
+            *CURR_EXPECTED_PANIC_MSG.lock().unwrap() = Some(expected_panic);
         }
-        PanicHandling::FailOnPanic => CURR_EXPECTED_PANIC_MSG.set(None),
+        PanicHandling::FailOnPanic => *CURR_EXPECTED_PANIC_MSG.lock().unwrap() = None,
     }
 
     ONCE.call_once(|| {
@@ -96,7 +108,7 @@ pub fn test_case_start(
 
         let curr_hook = std::panic::take_hook();
         std::panic::set_hook(std::boxed::Box::new(move |info| {
-            let curr_expected_panic_msg = CURR_EXPECTED_PANIC_MSG.get();
+            let curr_expected_panic_msg = CURR_EXPECTED_PANIC_MSG.lock().unwrap();
             let should_panic =
                 curr_expected_panic_msg.is_some_and(|expected_panic| match expected_panic {
                     ExpectedPanicMsg::Any => true,
@@ -118,7 +130,7 @@ pub fn test_case_start(
             } else {
                 eprintln!("{info}");
 
-                if let Some(ExpectedPanicMsg::Exact(expected)) = curr_expected_panic_msg {
+                if let Some(ExpectedPanicMsg::Exact(expected)) = *curr_expected_panic_msg {
                     eprintln!("Expected Panic: {expected}");
                 }
             }
@@ -129,7 +141,8 @@ pub fn test_case_start(
 /// Marks the test case end in the related logfile.
 pub fn test_case_end() {
     let test_case_name = CURR_TEST_CASE_NAME
-        .get()
+        .lock()
+        .unwrap()
         .expect("Test case name must be set at the start of a test case");
 
     let test_case_logpath = get_test_case_logpath(test_case_name);
@@ -147,7 +160,9 @@ pub fn test_case_end() {
     )
     .expect("Couldn't append log entries to logfile.");
 
-    CURR_TEST_CASE_NAME.set(None);
+    *CURR_TEST_CASE_NAME.lock().unwrap() = None;
+
+    TEST_CASE_ACTIVE.store(false, atomic::Ordering::Relaxed);
 }
 
 /// Returns the absolute path to the logfile of a test case.
@@ -243,12 +258,14 @@ impl log::Log for TestCaseLogger {
     }
 
     fn log(&self, record: &log::Record) {
-        let Some(test_case_name) = CURR_TEST_CASE_NAME.get() else {
+        let Some(test_case_name) = *CURR_TEST_CASE_NAME.lock().unwrap() else {
             ENV_LOGGER.log(record);
             return;
         };
         let test_case_logpath = get_test_case_logpath(test_case_name);
         let log_content = format!("{}", record.args());
+
+        let mantra_msg = log_content.contains("mantra coverage");
 
         let log_frame = LogFrame {
             level: record.level(),
@@ -270,7 +287,9 @@ impl log::Log for TestCaseLogger {
         )
         .expect("Couldn't append requirements trace to logfile.");
 
-        ENV_LOGGER.log(record);
+        if !mantra_msg {
+            ENV_LOGGER.log(record);
+        }
     }
 
     fn flush(&self) {}

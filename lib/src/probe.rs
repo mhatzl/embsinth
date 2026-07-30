@@ -47,7 +47,7 @@ impl ProbeId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProbeState {
-    Opened,
+    Taken,
     Free,
 }
 
@@ -104,26 +104,32 @@ impl AttachedProbe {
             match probe_states.get_mut(&probe_id) {
                 Some(state) => {
                     if state == &ProbeState::Free {
-                        *state = ProbeState::Opened;
+                        *state = ProbeState::Taken;
                         true
                     } else {
                         false
                     }
                 }
                 None => {
-                    probe_states.insert(probe_id.clone(), ProbeState::Opened);
+                    probe_states.insert(probe_id.clone(), ProbeState::Taken);
                     true
                 }
             }
         };
 
         if !probe_aquired {
+            log::error!(
+                "Probe {:x}:{:x}:{:?} is already taken!",
+                probe_id.vid,
+                probe_id.pid,
+                probe_id.ser_nr
+            );
             return Err(ProbeError {
                 kind: ProbeErrorKind::ProbeTaken,
             });
         }
 
-        eprintln!("Attaching to: {}", probe);
+        log::info!("Attaching to: {}", probe);
 
         let chip = chip.into();
         for _ in 1..=MAX_PROBE_RETRIES {
@@ -174,17 +180,19 @@ impl AttachedProbe {
             });
         }
 
-        halt_core(&mut self.session);
+        // reset_and_halt(&mut self.session);
 
         FLASHED.call_once(|| {
+            log::info!("Flashing once file '{}'", binary_file.display());
             flash_binary(&mut self.session, &binary_file).expect("Flashing the app must succeed");
         });
 
         enable_vector_catch(&mut self.session);
+        // reset_and_halt(&mut self.session);
 
-        {
-            let _ = self.session.core(0).expect("Failed to get Core 0").reset();
-        }
+        // {
+        //     let _ = self.session.core(0).expect("Failed to get Core 0").reset();
+        // }
 
         Ok(Connection::new(self, binary_file))
     }
@@ -201,9 +209,16 @@ impl AttachedProbe {
             });
         }
 
-        halt_core(&mut self.session);
+        // reset_and_halt(&mut self.session);
+
+        log::info!("Flashing file '{}'", binary_file.display());
         flash_binary(&mut self.session, &binary_file)?;
         enable_vector_catch(&mut self.session);
+        // reset_and_halt(&mut self.session);
+
+        // {
+        //     let _ = self.session.core(0).expect("Failed to get Core 0").reset();
+        // }
 
         Ok(Connection::new(self, binary_file))
     }
@@ -245,9 +260,9 @@ fn flash_binary(session: &mut Session, binary_file: &Path) -> Result<(), ProbeEr
     Ok(())
 }
 
-fn halt_core(session: &mut Session) {
+fn reset_and_halt(session: &mut Session) {
     let mut core = session.core(0).expect("could not select core 0");
-    core.halt(PROBE_RS_TIMEOUT)
+    core.reset_and_halt(PROBE_RS_TIMEOUT)
         .expect("timeout while halting core");
 }
 
