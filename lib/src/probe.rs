@@ -180,19 +180,12 @@ impl AttachedProbe {
             });
         }
 
-        // reset_and_halt(&mut self.session);
-
         FLASHED.call_once(|| {
             log::info!("Flashing once file '{}'", binary_file.display());
             flash_binary(&mut self.session, &binary_file).expect("Flashing the app must succeed");
         });
 
         enable_vector_catch(&mut self.session);
-        // reset_and_halt(&mut self.session);
-
-        // {
-        //     let _ = self.session.core(0).expect("Failed to get Core 0").reset();
-        // }
 
         Ok(Connection::new(self, binary_file))
     }
@@ -209,16 +202,9 @@ impl AttachedProbe {
             });
         }
 
-        // reset_and_halt(&mut self.session);
-
         log::info!("Flashing file '{}'", binary_file.display());
         flash_binary(&mut self.session, &binary_file)?;
         enable_vector_catch(&mut self.session);
-        // reset_and_halt(&mut self.session);
-
-        // {
-        //     let _ = self.session.core(0).expect("Failed to get Core 0").reset();
-        // }
 
         Ok(Connection::new(self, binary_file))
     }

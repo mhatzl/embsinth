@@ -6,9 +6,9 @@ use std::{
     time::Duration,
 };
 
-use defmt_decoder::{DecodeError, Frame, Location, StreamDecoder};
+use defmt_decoder::{DecodeError, Frame, Location};
 use defmt_parser::Level;
-use probe_rs::{Session, rtt::UpChannel};
+use probe_rs::Session;
 
 use crate::connection::RttActiveUpChannel;
 
@@ -165,10 +165,6 @@ fn read_defmt_msgs(
 
     // main_thread.unpark();
 
-    // const RX_BUFSZ: usize = 1_024;
-    // let mut upchannel_buffer: Vec<u8> = Vec::new();
-    // let mut fatal_error_timestamp = None;
-
     let mut decoder = table.new_stream_decoder();
     let mut exiting = false;
     loop {
@@ -229,24 +225,6 @@ fn read_defmt_msgs(
             loop {
                 match decoder.decode() {
                     Ok(frame) => {
-                        // let loc = location.as_ref().and_then(|locs| locs.get(&frame.index()));
-                        // let (file, line, module) = if let Some(loc) = loc {
-                        //     (
-                        //         loc.file.display().to_string(),
-                        //         Some(loc.line.try_into().unwrap()),
-                        //         Some(loc.module.as_str()),
-                        //     )
-                        // } else {
-                        //     (
-                        //         format!(
-                        //             "└─ <invalid location: defmt frame-index: {}>",
-                        //             frame.index()
-                        //         ),
-                        //         None,
-                        //         None,
-                        //     )
-                        // };
-
                         let location = locs.get(&frame.index()).cloned();
                         let defmt_msg: DefmtFrame = (frame, location).into();
 
@@ -270,63 +248,12 @@ fn read_defmt_msgs(
                 }
             }
         }
-        // // extract all the defmt frames (0-terminated) present in the buffer
-        // while let Some(delimiter) = upchannel_buffer.iter().position(|&x| x == 0) {
-        //     let encoded = &upchannel_buffer[..delimiter];
-
-        //     let decode_res = rzcobs::decode(encoded);
-
-        //     // discard encoded frame
-        //     upchannel_buffer.drain(0..delimiter + 1);
-
-        //     let Ok(decoded) = decode_res else {
-        //         // try next frame
-        //         continue;
-        //     };
-
-        //     let (frame, _consumed) = table.decode(&decoded).expect("defmt decode error");
-
-        //     let location = locs.get(&frame.index()).cloned();
-        //     let defmt_msg: DefmtFrame = (frame, location).into();
-
-        //     frame_tx
-        //         .send(defmt_msg)
-        //         .expect("unreachable: given synchronization with ProbeRs' destructor");
-        // }
-
-        // // no more frames available so (try to) pull more data out of the device
-        // {
-        //     let mut session = session.lock().unwrap();
-        //     let mut core = session.core(0).expect("could not select core 0");
-        //     let mut buf = [0; RX_BUFSZ];
-        //     let read = upchannel
-        //         .read(&mut core, &mut buf)
-        //         .expect("error reading RTT upchannel");
-
-        //     if read == 0 {
-        //         if exiting {
-        //             // device halted so there'll be no more new data; exit
-        //             break;
-        //         } else {
-        //             std::thread::sleep(Duration::from_millis(1));
-        //         }
-        //     } else {
-        //         let mut new_data = &buf[..read];
-        //         if upchannel_buffer.is_empty() {
-        //             while new_data.first() == Some(&0) {
-        //                 new_data = &new_data[1..];
-        //             }
-        //         }
-
-        //         upchannel_buffer.extend_from_slice(new_data);
-        //     }
-        // }
     }
 
-    // drop the shared data (including the ProbeRs session) before notifying the main thread.
+    // drop the shared data (including the probe-rs session) before notifying the main thread.
     drop(shared);
 
-    // inform the foreground thread that the probe-rs Session has been destroyed
+    // inform the foreground thread that the probe-rs session has been destroyed
     done_tx.send(()).ok();
 
     Ok(())

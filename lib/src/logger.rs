@@ -248,7 +248,7 @@ struct TestCaseLogger;
 
 impl log::Log for TestCaseLogger {
     fn enabled(&self, _metadata: &log::Metadata) -> bool {
-        // Note: `set_max_level()` in the `init()` already filters logs so we don't need to double check.
+        // Note: `set_max_level()` in the `test_case_start()` is set to `Trace` so we don't need to double check.
         // We also don't check `enabled()` in the `log()` fn, because we assume it always returns `true`.
         true
     }

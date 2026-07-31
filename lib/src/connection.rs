@@ -43,7 +43,6 @@ impl Drop for Connection {
         log::warn!("Dropping connection to probe: {:?}", self.probe_id);
 
         // Free the selected probe so it may be reused for new connections
-        // The probe session is
         {
             let mut states = crate::probe::PROBE_STATES
                 .lock()
@@ -146,8 +145,6 @@ impl Connection {
     /// Reads a `defmt` message from the RTT buffer without blocking
     ///
     /// Returns `None` if there isn't a complete frame in the buffer
-    // can't use `StreamDecoder` because lifetimes (would require a self-referential struct) so
-    // re-do the `StreamDecoder` logic here
     pub fn try_next_msg(&mut self) -> Option<DefmtFrame> {
         self.msg_rx
             .try_recv()
@@ -270,29 +267,22 @@ pub(crate) fn rtt_upchannel(session: &mut Session, binary_bytes: &[u8]) -> RttAc
         active_channel.up_channel.name()
     );
 
+    assert_eq!(
+        active_channel.channel_name(),
+        "defmt",
+        "Found RTT channel must be named 'defmt'"
+    );
+
     core.clear_all_hw_breakpoints()
         .expect("Failed to clear hw breakpoints");
     core.run().expect("Failed to continue execution");
 
+    // Note: Setting blocking mode before `core.run()` had no effect, so setting it here
     active_channel
         .change_mode(&mut core, ChannelMode::BlockIfFull)
         .expect("could not change RTT channel mode");
 
     active_channel
-
-    // upchannel
-    //     .set_mode(&mut core, probe_rs::rtt::ChannelMode::BlockIfFull)
-    //     .expect("could not change RTT channel mode");
-
-    // log::info!(
-    //     "RTT Mode: {:?}",
-    //     upchannel.mode(&mut core).expect("RTT Mode has been set")
-    // );
-
-    // // resume execution
-    // // core.run().expect("could not resume execution");
-
-    // upchannel
 }
 
 pub struct ConnectionError {
@@ -309,6 +299,7 @@ fn clear_thumb_bit(addr: u64) -> u64 {
     addr & (!1u64)
 }
 
+// Note: Code taken from probe-rs, because it is not (yet) part of the library crate and only in the binary one.
 #[derive(Debug)]
 pub(crate) struct RttActiveUpChannel {
     up_channel: UpChannel,

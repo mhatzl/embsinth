@@ -6,7 +6,7 @@ use syn::{Expr, LitStr, Stmt, parse_quote};
 /// ## Usage
 ///
 /// ```ignore
-/// #[test]
+/// #[embsinth::test]
 /// fn my_test() {
 ///   // your test code as usual...
 /// }
