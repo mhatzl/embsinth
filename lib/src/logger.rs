@@ -6,10 +6,11 @@ use std::{
     time::Duration,
 };
 
+use mantra_schema::test_runs::TestCaseState;
 use relative_path::RelativePathBuf;
 
 /// File extension for newline separated JSON log files for test cases.
-const TEST_CASE_LOGFILE_EXTENSION: &str = "jsonl";
+pub(crate) const TEST_CASE_LOGFILE_EXTENSION: &str = "jsonl";
 
 /// Holds the absolute path to the logs directory for a crate.
 /// e.g. <EMBSINTH_OUT_DIR>/<CARGO_PKG_NAME>/logs/
@@ -152,7 +153,7 @@ pub fn test_case_end() {
         opened_file,
         "{}",
         LogEntry::from(TestCaseEnd {
-            state: TestState::Passed
+            state: TestCaseState::Passed
         })
         .to_jsonl()
     )
@@ -235,13 +236,7 @@ impl TestCaseStart {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct TestCaseEnd {
     /// The final state of the test case.
-    pub state: TestState,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum TestState {
-    Passed,
-    Failed,
+    pub state: TestCaseState,
 }
 
 struct TestCaseLogger;
@@ -250,10 +245,15 @@ impl log::Log for TestCaseLogger {
     fn enabled(&self, _metadata: &log::Metadata) -> bool {
         // Note: `set_max_level()` in the `test_case_start()` is set to `Trace` so we don't need to double check.
         // We also don't check `enabled()` in the `log()` fn, because we assume it always returns `true`.
+        // Filtering is based on env_logger settings.
         true
     }
 
     fn log(&self, record: &log::Record) {
+        if !ENV_LOGGER.enabled(record.metadata()) {
+            return;
+        }
+
         let Some(test_case_name) = *CURR_TEST_CASE_NAME.lock().unwrap() else {
             ENV_LOGGER.log(record);
             return;
@@ -269,19 +269,19 @@ impl log::Log for TestCaseLogger {
             file: record.file().map(RelativePathBuf::from),
             line: record.line(),
         };
+        let log_entry = LogEntry::from(log_frame);
+        let mut content = serde_json::to_string(&log_entry)
+            .expect("Log entry is serializable")
+            .replace("\n", " ");
+        content.push('\n');
 
         let mut opened_file = OpenOptions::new()
             .append(true)
             .open(&test_case_logpath)
             .unwrap_or_else(|_| panic!("Couldn't open logfile: {}", test_case_logpath.display()));
-        writeln!(
-            opened_file,
-            "{}",
-            serde_json::to_string(&log_frame)
-                .expect("Log frame is serializable")
-                .replace("\n", " ")
-        )
-        .expect("Couldn't append requirements trace to logfile.");
+        // Note: `writeln!()` cannot be used here, because concurrent writes to logs may interleave with writing content and newline.
+        // Newline is added to content above
+        write!(opened_file, "{content}",).expect("Couldn't append requirements trace to logfile.");
 
         if !mantra_msg {
             ENV_LOGGER.log(record);

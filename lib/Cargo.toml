@@ -15,6 +15,10 @@ log = "0.4.33"
 thiserror = "2.0.19"
 anyhow = "1.0.104"
 env_logger = "0.11.8"
+ignore = "0.4.31"
+clap = { version = "4.6.5", features = ["derive"] }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = { version = "1.0" }
 relative-path = { version = "2.0.1", features = ["alloc", "serde"] }
+mantra-schema = "0.8"
+mantra-macros = { path = "/Users/manuelhatzl/Documents/Projects/mantra/mantra/langs/rust/mantra-macros", features = ["extract"] }
