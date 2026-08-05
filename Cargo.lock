@@ -1443,6 +1443,7 @@ dependencies = [
 [[package]]
 name = "mantra-macros"
 version = "0.8.0"
+source = "git+https://github.com/mhatzl/mantra#8adbe90dc84c6ad8cc5561a4ac7e86a1b283851c"
 dependencies = [
  "mantra-procm",
  "regex",
@@ -1451,6 +1452,7 @@ dependencies = [
 [[package]]
 name = "mantra-procm"
 version = "0.8.0"
+source = "git+https://github.com/mhatzl/mantra#8adbe90dc84c6ad8cc5561a4ac7e86a1b283851c"
 
 [[package]]
 name = "mantra-schema"
