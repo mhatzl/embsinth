@@ -2,8 +2,7 @@ use std::{
     fs::OpenOptions,
     io::Write,
     path::PathBuf,
-    sync::{LazyLock, Mutex, Once},
-    time::Duration,
+    sync::{LazyLock, Mutex, MutexGuard, Once},
 };
 
 use mantra_schema::test_runs::TestCaseState;
@@ -35,6 +34,9 @@ static CURR_TEST_CASE_NAME: LazyLock<Mutex<Option<&'static str>>> =
 /// Thread local static used to store the currently active test case per thread.
 static CURR_EXPECTED_PANIC_MSG: LazyLock<Mutex<Option<ExpectedPanicMsg>>> =
     LazyLock::new(|| Mutex::new(None));
+/// Guard to ensure tests are run in sequence.
+/// Needed, because only one test can access hardware at a time.
+static TEST_GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Defines the matching behavior for tests marked with `#[should_panic]`.
 #[derive(Debug, Clone, Copy)]
@@ -60,7 +62,7 @@ pub fn test_case_start(
     filepath: &'static str,
     line: u32,
     panic_handling: PanicHandling,
-) {
+) -> MutexGuard<'static, ()> {
     static ONCE: Once = Once::new();
 
     let test_case_logpath = get_test_case_logpath(test_case_name);
@@ -83,15 +85,17 @@ pub fn test_case_start(
         )
     });
 
-    loop {
-        {
-            let mut curr_test_name = CURR_TEST_CASE_NAME.lock().unwrap();
-            if curr_test_name.is_none() {
-                *curr_test_name = Some(test_case_name);
-                break;
-            }
+    let guard = match TEST_GUARD.lock() {
+        Ok(lock) => lock,
+        Err(err) => err.into_inner(), // poisoned lock means some other test panicked
+    };
+
+    {
+        let mut curr_test_name = CURR_TEST_CASE_NAME.lock().unwrap();
+        if let Some(other_test) = *curr_test_name {
+            eprintln!("Test '{other_test}' panicked! New test '{test_case_name}' takes over.")
         }
-        std::thread::sleep(Duration::from_secs(5));
+        *curr_test_name = Some(test_case_name);
     }
 
     match panic_handling {
@@ -135,6 +139,8 @@ pub fn test_case_start(
             }
         }));
     });
+
+    guard
 }
 
 /// Marks the test case end in the related logfile.

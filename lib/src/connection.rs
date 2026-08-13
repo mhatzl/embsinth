@@ -16,7 +16,7 @@ use probe_rs::{
 
 use crate::{
     defmt::{DefmtFrame, DefmtThreadCommunication, log_defmt_msg},
-    probe::{AttachedProbe, ProbeId, ProbeState},
+    probe::{AttachedProbe, ProbeId},
 };
 
 pub struct Connection {
@@ -41,17 +41,6 @@ impl Drop for Connection {
         self.flush_defmt_msgs(false);
 
         log::warn!("Dropping connection to probe: {:?}", self.probe_id);
-
-        // Free the selected probe so it may be reused for new connections
-        {
-            let mut states = crate::probe::PROBE_STATES
-                .lock()
-                .expect("Probe state map has been poisoned in some thread");
-            let state = states
-                .get_mut(&self.probe_id)
-                .expect("Probe ID must have been inserted when aquiring");
-            *state = ProbeState::Free;
-        }
     }
 }
 
@@ -74,7 +63,8 @@ impl Connection {
             upchannel,
         );
 
-        // std::thread::park();
+        // Gets unparked by the defmt thread
+        std::thread::park();
 
         Self {
             probe_id: probe.id,
@@ -84,15 +74,6 @@ impl Connection {
             done_rx,
             panic_on_disconnected_error: true,
         }
-    }
-
-    pub fn start(&mut self) {
-        let mut session = self
-            .shared
-            .session
-            .lock()
-            .expect("Session poisoned by bad log extraction");
-        let _ = session.core(0).expect("Failed to access Core 0").run();
     }
 
     pub fn close(self) {
