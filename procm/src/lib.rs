@@ -14,10 +14,10 @@ use syn::{Expr, LitStr, Stmt, parse_quote};
 #[proc_macro_attribute]
 pub fn test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let Ok(parsed_item) = syn::parse::<syn::Item>(item) else {
-        panic!("Failed to parse the item `req_test` was set on.")
+        panic!("Failed to parse the item the attribute macro was set on.")
     };
     let syn::Item::Fn(mut fn_item) = parsed_item else {
-        panic!("Attribute `req_test` can only be set on a function.");
+        panic!("Macro can only be set on a function.");
     };
 
     let mut expected_panic: Option<Expr> = None;
@@ -40,9 +40,7 @@ pub fn test(_attr: TokenStream, item: TokenStream) -> TokenStream {
             });
 
             if expected_panic.is_none() {
-                expected_panic = Some(parse_quote!(
-                    embsinth::logger::::ExpectedPanicMsg::Any
-                ));
+                expected_panic = Some(parse_quote!(embsinth::logger::ExpectedPanicMsg::Any));
             }
         }
     }
@@ -61,13 +59,13 @@ pub fn test(_attr: TokenStream, item: TokenStream) -> TokenStream {
     fn_item.block.stmts = match expected_panic {
         Some(expected_msg) => {
             let log_init: Stmt = parse_quote!(
-                embsinth::logger::test_case_start(core::any::type_name_of_val(&#fn_name), file!(), line!(), embsinth::logger::PanicHandling::ShouldPanic(#expected_msg));
+                let _guard = embsinth::logger::test_case_start(core::any::type_name_of_val(&#fn_name), file!(), line!(), embsinth::logger::PanicHandling::ShouldPanic(#expected_msg));
             );
             vec![log_init, wrapped_stmts]
         }
         None => {
             let log_init: Stmt = parse_quote!(
-                embsinth::logger::test_case_start(core::any::type_name_of_val(&#fn_name), file!(), line!(), embsinth::logger::PanicHandling::FailOnPanic);
+                let _guard = embsinth::logger::test_case_start(core::any::type_name_of_val(&#fn_name), file!(), line!(), embsinth::logger::PanicHandling::FailOnPanic);
             );
             let log_end: Stmt = parse_quote!(embsinth::logger::test_case_end(););
             vec![log_init, wrapped_stmts, log_end]

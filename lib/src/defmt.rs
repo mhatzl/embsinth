@@ -163,9 +163,10 @@ fn read_defmt_msgs(
         ref stop_defmt_tx,
     } = *shared;
 
-    // main_thread.unpark();
-
     let mut decoder = table.new_stream_decoder();
+
+    main_thread.unpark(); // everything ready to receive defmt messages => continue main thread
+
     let mut exiting = false;
     loop {
         {
