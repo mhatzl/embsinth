@@ -1,8 +1,7 @@
 use std::{
-    collections::HashMap,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::{Mutex, Once},
+    sync::Once,
     time::Duration,
 };
 
@@ -45,15 +44,6 @@ impl ProbeId {
     }
 }
 
-// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// pub(crate) enum ProbeState {
-//     Taken,
-//     Free,
-// }
-
-// pub(crate) static PROBE_STATES: std::sync::LazyLock<Mutex<HashMap<ProbeId, ProbeState>>> =
-//     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-
 const MAX_PROBE_RETRIES: usize = 5;
 
 pub struct AttachedProbe {
@@ -95,39 +85,6 @@ impl AttachedProbe {
                 kind: ProbeErrorKind::MissingProbe,
             });
         };
-
-        // let probe_aquired = {
-        //     let mut probe_states = PROBE_STATES
-        //         .lock()
-        //         .expect("Probe state map has been poisoned in some thread");
-
-        //     match probe_states.get_mut(&probe_id) {
-        //         Some(state) => {
-        //             if state == &ProbeState::Free {
-        //                 *state = ProbeState::Taken;
-        //                 true
-        //             } else {
-        //                 false
-        //             }
-        //         }
-        //         None => {
-        //             probe_states.insert(probe_id.clone(), ProbeState::Taken);
-        //             true
-        //         }
-        //     }
-        // };
-
-        // if !probe_aquired {
-        //     log::error!(
-        //         "Probe {:x}:{:x}:{:?} is already taken!",
-        //         probe_id.vid,
-        //         probe_id.pid,
-        //         probe_id.ser_nr
-        //     );
-        //     return Err(ProbeError {
-        //         kind: ProbeErrorKind::ProbeTaken,
-        //     });
-        // }
 
         log::info!("Attaching to: {}", probe);
 
