@@ -3,7 +3,9 @@ name = "embsinth-procm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 readme = "README.md"
+description = "Contains procedural macros used by `embsinth`"
 
 [lib]
 proc-macro = true
@@ -11,4 +13,4 @@ proc-macro = true
 [dependencies]
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
-syn = "3.0.3"
+syn = { version = "3.0.3", features = ["full"] }
