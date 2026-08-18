@@ -12,7 +12,7 @@ use probe_rs::Session;
 
 use crate::connection::RttActiveUpChannel;
 
-/// Like `defmt_decoder::Frame` but without lifetimes
+/// Like [`defmt_decoder::Frame`] but without lifetimes.
 #[derive(Debug)]
 pub struct DefmtFrame {
     pub index: u64,
@@ -81,34 +81,18 @@ pub struct DefmtThreadError {
 }
 
 impl DefmtThreadError {
-    fn new(kind: DefmtThreadErrorKind) -> Self {
-        Self { kind, source: None }
+    /// The kind of error raised in the defmt background thread.
+    pub fn kind(&self) -> DefmtThreadErrorKind {
+        self.kind
     }
 
-    fn reading_binary(source: impl Into<anyhow::Error>) -> Self {
-        Self {
-            kind: DefmtThreadErrorKind::ReadingBinaryFile,
-            source: Some(source.into()),
-        }
+    fn new(kind: DefmtThreadErrorKind) -> Self {
+        Self { kind, source: None }
     }
 
     fn parsing_table(source: impl Into<anyhow::Error>) -> Self {
         Self {
             kind: DefmtThreadErrorKind::ParsingTable,
-            source: Some(source.into()),
-        }
-    }
-
-    fn missing_defmt(source: impl Into<anyhow::Error>) -> Self {
-        Self {
-            kind: DefmtThreadErrorKind::MissingDefmtData,
-            source: Some(source.into()),
-        }
-    }
-
-    fn wrong_encoding(source: impl Into<anyhow::Error>) -> Self {
-        Self {
-            kind: DefmtThreadErrorKind::WrongEncoding,
             source: Some(source.into()),
         }
     }
@@ -121,10 +105,9 @@ impl DefmtThreadError {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+/// Error kinds that may be raised in the defmt background thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DefmtThreadErrorKind {
-    #[error("Failed reading the binary file")]
-    ReadingBinaryFile,
     #[error("Failed decoding the defmt data")]
     ParsingTable,
     #[error("No defmt data found in given binary file")]
@@ -241,9 +224,7 @@ fn read_defmt_msgs(
                     }
                     Err(DecodeError::Malformed) => {
                         panic!(
-                            "Unrecoverable error while decoding Defmt \
-                        data. Some data may have been lost: {}",
-                            DecodeError::Malformed
+                            "Unrecoverable error while decoding Defmt data. Some data may have been lost!"
                         );
                     }
                 }

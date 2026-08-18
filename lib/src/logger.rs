@@ -56,7 +56,8 @@ pub enum PanicHandling {
     FailOnPanic,
 }
 
-/// Initializes a logger and accompanying logfile per running test case to capture mantra traces.
+/// Initializes a logger and accompanying logfile per running test case to capture logs and mantra coverage.
+#[doc(hidden)]
 pub fn test_case_start(
     test_case_name: &'static str,
     filepath: &'static str,
@@ -144,6 +145,7 @@ pub fn test_case_start(
 }
 
 /// Marks the test case end in the related logfile.
+#[doc(hidden)]
 pub fn test_case_end() {
     let test_case_name = CURR_TEST_CASE_NAME
         .lock()
@@ -176,10 +178,15 @@ fn get_test_case_logpath(test_case_name: &str) -> PathBuf {
     test_case_logpath
 }
 
+/// A log entry that is written into the newline-separated `*.jsonl` files.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum LogEntry {
+    /// The first log entry per file contains information about the related test case for the logs.
     TestCaseStart(TestCaseStart),
+    /// The last log entry per file should indicate the ending of a test case.
+    /// If this is missing, the test case likely panicked or was cancelled and will be treated as failed.
     TestCaseEnd(TestCaseEnd),
+    /// A log message captured while executing a test case.
     LogFrame(LogFrame),
 }
 
@@ -209,6 +216,7 @@ impl From<TestCaseEnd> for LogEntry {
     }
 }
 
+/// A plain log message that was captured while testing.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct LogFrame {
     pub level: log::Level,
@@ -217,7 +225,7 @@ pub struct LogFrame {
     pub line: Option<u32>,
 }
 
-/// Represents a function that is marked with `#[traced_test]`.
+/// Represents a function that is marked with `#[embsinth::test]`.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct TestCaseStart {
     /// Fully qualified name of the function.

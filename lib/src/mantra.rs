@@ -13,6 +13,8 @@ use relative_path::RelativePathBuf;
 
 use crate::logger::LogEntry;
 
+/// Process all `*.jsonl` files found in the given directory and convert them into a mantra test run.
+/// This assumes that all `*.jsonl` files contain log entries set by `embsinth`.
 pub fn process(
     dir: &Path,
     test_run_name: impl Into<String>,

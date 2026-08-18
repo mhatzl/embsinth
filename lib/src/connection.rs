@@ -19,6 +19,13 @@ use crate::{
     probe::{AttachedProbe, ProbeId},
 };
 
+/// A connection to an embedded target.
+///
+/// May be used to read and filter `defmt` messages from the target via RTT.
+/// Can be created using either [`flash_and_connect`](crate::probe::AttachedProbe::flash_and_connect),
+/// or [`flash_once_and_connect`](crate::probe::AttachedProbe::flash_once_and_connect).
+///
+/// Use [`defmt-rtt`](https://crates.io/crates/defmt-rtt) on the target.
 pub struct Connection {
     probe_id: ProbeId,
     chip: String,
@@ -45,6 +52,8 @@ impl Drop for Connection {
 }
 
 impl Connection {
+    /// Create a new connection using the attached probe.
+    /// The given binary file must be the one that is flashed to the target, because it is used to decode `defmt` logs.
     pub(crate) fn new(mut probe: AttachedProbe, binary_file: PathBuf) -> Self {
         let binary_bytes = std::fs::read(&binary_file).expect("Failed to read binary bytes");
 
@@ -76,14 +85,18 @@ impl Connection {
         }
     }
 
+    /// Close the connection to an embedded target.
+    /// This will free up the used probe.
     pub fn close(self) {
         drop(self);
     }
 
+    /// The [`ProbeId`] of the probe used for the connection to the embedded target.
     pub fn probe_id(&self) -> &ProbeId {
         &self.probe_id
     }
 
+    /// The chip of the connected embedded target.
     pub fn chip(&self) -> &str {
         &self.chip
     }
@@ -123,7 +136,7 @@ impl Connection {
             .expect("Frame receiver disconnected. Likely due to hard fault.")
     }
 
-    /// Reads a `defmt` message from the RTT buffer without blocking
+    /// Reads a `defmt` frame from the RTT buffer without blocking
     ///
     /// Returns `None` if there isn't a complete frame in the buffer
     pub fn try_next_msg(&mut self) -> Option<DefmtFrame> {
@@ -139,7 +152,7 @@ impl Connection {
             .ok()
     }
 
-    /// Reads next defmt messages until either the given condition or timeout have been reached
+    /// Reads next defmt frames until either the given condition or timeout have been reached.
     pub fn search_msg_for(
         &mut self,
         timeout: Duration,
@@ -168,6 +181,9 @@ impl Connection {
         }
     }
 
+    /// Flushes all buffered defmt frames, and prints them to stdout if `print=true`.
+    ///
+    /// Used to capture all buffered frames before connection is dropped.
     pub fn flush_defmt_msgs(&mut self, print: bool) {
         while let Some(msg) = self.try_next_msg() {
             if print {
@@ -176,6 +192,8 @@ impl Connection {
         }
     }
 
+    /// Controls whether the connection should panic if the embedded target disconnected.
+    /// This is `true` by default.
     pub fn set_panic_on_disconnected(&mut self, should_panic: bool) {
         self.panic_on_disconnected_error = should_panic;
     }
@@ -205,8 +223,10 @@ pub(crate) fn has_hard_faulted(core: &mut probe_rs::Core) -> bool {
 }
 
 pub(crate) fn rtt_upchannel(session: &mut Session, binary_bytes: &[u8]) -> RttActiveUpChannel {
+    const TIMEOUT: Duration = Duration::from_secs(2);
+
     let mut core = session.core(0).expect("could not select core 0");
-    core.reset_and_halt(Duration::from_secs(5))
+    core.reset_and_halt(TIMEOUT)
         .expect("could not reset device");
 
     // to prevent a race condition between the host reading the RTT block and the
@@ -216,7 +236,7 @@ pub(crate) fn rtt_upchannel(session: &mut Session, binary_bytes: &[u8]) -> RttAc
     core.set_hw_breakpoint(clear_thumb_bit(get_symbol_address(binary_bytes, "main")))
         .expect("could not set breakpoint");
     core.run().expect("could not resume execution");
-    core.wait_for_core_halted(Duration::from_secs(5))
+    core.wait_for_core_halted(TIMEOUT)
         .expect("did not hit breakpoint");
 
     // TODO: check how this can be generalized without much need of adapting application code
@@ -266,12 +286,6 @@ pub(crate) fn rtt_upchannel(session: &mut Session, binary_bytes: &[u8]) -> RttAc
     active_channel
 }
 
-pub struct ConnectionError {
-    kind: ConnectionErrorKind,
-}
-
-pub enum ConnectionErrorKind {}
-
 /// in the Cortex-M ISA, routines (functions) are always 2-byte aligned but
 // in the ELF file; and machine code, they have the bit 0, the "thumb bit"
 // set to 1 to indicate they contain THUMB instructions the probe-rs API
@@ -317,16 +331,6 @@ impl RttActiveUpChannel {
             .unwrap_or_else(|| format!("Unnamed RTT up channel - {}", self.up_channel.number()))
     }
 
-    /// Returns the buffer size in bytes. Note that the usable size is one byte less due to how the
-    /// ring buffer is implemented.
-    pub fn buffer_size(&self) -> usize {
-        self.up_channel.buffer_size()
-    }
-
-    pub fn number(&self) -> u32 {
-        self.up_channel.number() as u32
-    }
-
     /// Reads available channel data into the internal buffer.
     pub fn poll(&mut self, core: &mut Core) -> Result<(), anyhow::Error> {
         self.bytes_buffered = self.up_channel.read(core, self.rtt_buffer.as_mut())?;
@@ -336,13 +340,5 @@ impl RttActiveUpChannel {
     /// Returns the buffered data.
     pub fn buffered_data(&self) -> &[u8] {
         &self.rtt_buffer[..self.bytes_buffered]
-    }
-
-    /// Clean up temporary changes made to the channel.
-    pub fn clean_up(&mut self, core: &mut Core) -> Result<(), anyhow::Error> {
-        if let Some(mode) = self.original_mode.take() {
-            self.up_channel.set_mode(core, mode)?;
-        }
-        Ok(())
     }
 }
