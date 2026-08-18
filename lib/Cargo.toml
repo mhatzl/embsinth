@@ -8,7 +8,7 @@ readme = "README.md"
 description = "Embedded systems and integration test harness"
 
 [dependencies]
-embsinth-procm = { path = "../procm" }
+embsinth-procm = { version = "0.1.0", path = "../procm" }
 object = "0.39.1"
 probe-rs = { version = "0.32.0", default-features = false, features = [
     "builtin-targets",
