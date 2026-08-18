@@ -103,7 +103,12 @@ fn logs_to_mantra_test_case(
         state_properties: None,
         location: Some(TestCaseLocation {
             filepath: mantra_schema::path::RelativePathBuf::from_path(&test_case_start.filepath)
-                .map_err(|err| anyhow!("Test case filepath is not relative"))?,
+                .map_err(|_err| {
+                    anyhow!(
+                        "Test case filepath is not relative: {}",
+                        test_case_start.filepath.display()
+                    )
+                })?,
             file_hash: None,
             line: test_case_start.line.into(),
         }),
