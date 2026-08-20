@@ -65,7 +65,7 @@ fn convert_file_content(filepath: &Path) -> Result<TestCase, anyhow::Error> {
     let content = std::fs::read_to_string(filepath)?;
     let logs = crate::mantra::content_to_logs(&content)
         .context("Failed converting file content to log entries")?;
-    let test_case = crate::mantra::logs_to_mantra_test_case(&logs)?;
+    let test_case = crate::mantra::logs_to_mantra_test_case(filepath, &logs)?;
     Ok(test_case)
 }
 
@@ -81,6 +81,7 @@ fn content_to_logs(content: &str) -> Result<Vec<LogEntry>, anyhow::Error> {
 }
 
 fn logs_to_mantra_test_case(
+    filepath: &Path,
     logs: &[LogEntry],
 ) -> Result<mantra_schema::test_runs::TestCase, anyhow::Error> {
     if logs.is_empty() {
@@ -160,6 +161,13 @@ fn logs_to_mantra_test_case(
         test_case.state = test_case_end.state;
     } else {
         test_case.state = TestCaseState::Failed;
+    }
+
+    if let Some(LogEntry::LogFrame(_frame)) = logs_iter.next() {
+        eprintln!(
+            "Ignoring log entry after test case ended in file: {}",
+            filepath.display()
+        );
     }
 
     for file in covered_files {

@@ -157,15 +157,21 @@ pub fn test_case_end() {
         .append(true)
         .open(&test_case_logpath)
         .unwrap_or_else(|_| panic!("Couldn't open logfile: {}", test_case_logpath.display()));
-    writeln!(
-        opened_file,
-        "{}",
-        LogEntry::from(TestCaseEnd {
-            state: TestCaseState::Passed
-        })
-        .to_jsonl()
-    )
-    .expect("Couldn't append log entries to logfile.");
+
+    // Note: `writeln!()` cannot be used here, because concurrent writes to logs may interleave with writing content and newline.
+    // Newline is added explicitly
+    opened_file
+        .write_all(
+            format!(
+                "{}\n",
+                LogEntry::from(TestCaseEnd {
+                    state: TestCaseState::Passed
+                })
+                .to_jsonl()
+            )
+            .as_bytes(),
+        )
+        .expect("Couldn't append log entries to logfile.");
 
     *CURR_TEST_CASE_NAME.lock().unwrap() = None;
 }
