@@ -1,8 +1,10 @@
 use std::{
     fs::OpenOptions,
     io::Write,
+    panic,
     path::PathBuf,
-    sync::{LazyLock, Mutex, MutexGuard, Once},
+    sync::{LazyLock, Mutex, MutexGuard, Once, atomic::AtomicUsize},
+    time::Duration,
 };
 
 use mantra_schema::test_runs::TestCaseState;
@@ -55,6 +57,8 @@ pub enum PanicHandling {
     /// This is the default behavior if a test case is **not** marked with `#[should_panic]`.
     FailOnPanic,
 }
+
+static IN_FLIGHT_LOGS: AtomicUsize = AtomicUsize::new(0);
 
 /// Initializes a logger and accompanying logfile per running test case to capture logs and mantra coverage.
 #[doc(hidden)]
@@ -147,27 +151,51 @@ pub fn test_case_start(
 /// Marks the test case end in the related logfile.
 #[doc(hidden)]
 pub fn test_case_end() {
-    let test_case_name = CURR_TEST_CASE_NAME
-        .lock()
-        .unwrap()
-        .expect("Test case name must be set at the start of a test case");
+    // We take the test case name and replace it with 'None' so new logs are not written to the log file anymore
+    let test_case_name = {
+        let mut guard = CURR_TEST_CASE_NAME.lock().unwrap();
+        let test_case_name = guard.expect("Test case name must be set at the start of a test case");
+        *guard = None;
+        test_case_name
+    };
+
+    let mut in_flights = IN_FLIGHT_LOGS.load(std::sync::atomic::Ordering::Relaxed);
+    while in_flights != 0 {
+        std::thread::sleep(Duration::from_millis(10));
+
+        let new_in_flights = IN_FLIGHT_LOGS.load(std::sync::atomic::Ordering::Relaxed);
+        if new_in_flights >= in_flights {
+            eprintln!(
+                "Not all logs have been processed before end of test '{}'. May cause log entries after ending marker in the logfile",
+                test_case_name
+            );
+
+            break;
+        }
+
+        in_flights = new_in_flights;
+    }
 
     let test_case_logpath = get_test_case_logpath(test_case_name);
     let mut opened_file = OpenOptions::new()
         .append(true)
         .open(&test_case_logpath)
         .unwrap_or_else(|_| panic!("Couldn't open logfile: {}", test_case_logpath.display()));
-    writeln!(
-        opened_file,
-        "{}",
-        LogEntry::from(TestCaseEnd {
-            state: TestCaseState::Passed
-        })
-        .to_jsonl()
-    )
-    .expect("Couldn't append log entries to logfile.");
 
-    *CURR_TEST_CASE_NAME.lock().unwrap() = None;
+    // Note: `writeln!()` cannot be used here, because concurrent writes to logs may interleave with writing content and newline.
+    // Newline is added explicitly
+    opened_file
+        .write_all(
+            format!(
+                "{}\n",
+                LogEntry::from(TestCaseEnd {
+                    state: TestCaseState::Passed
+                })
+                .to_jsonl()
+            )
+            .as_bytes(),
+        )
+        .expect("Couldn't append log entries to logfile.");
 }
 
 /// Returns the absolute path to the logfile of a test case.
@@ -272,33 +300,46 @@ impl log::Log for TestCaseLogger {
             ENV_LOGGER.log(record);
             return;
         };
-        let test_case_logpath = get_test_case_logpath(test_case_name);
-        let log_content = format!("{}", record.args());
+        IN_FLIGHT_LOGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        let mantra_msg = log_content.contains("mantra coverage");
+        let res = panic::catch_unwind(|| {
+            let test_case_logpath = get_test_case_logpath(test_case_name);
+            let log_content = format!("{}", record.args());
 
-        let log_frame = LogFrame {
-            level: record.level(),
-            message: log_content,
-            file: record.file().map(RelativePathBuf::from),
-            line: record.line(),
-        };
-        let log_entry = LogEntry::from(log_frame);
-        let mut content = serde_json::to_string(&log_entry)
-            .expect("Log entry is serializable")
-            .replace("\n", " ");
-        content.push('\n');
+            let mantra_msg = log_content.contains("mantra coverage");
 
-        let mut opened_file = OpenOptions::new()
-            .append(true)
-            .open(&test_case_logpath)
-            .unwrap_or_else(|_| panic!("Couldn't open logfile: {}", test_case_logpath.display()));
-        // Note: `writeln!()` cannot be used here, because concurrent writes to logs may interleave with writing content and newline.
-        // Newline is added to content above
-        write!(opened_file, "{content}",).expect("Couldn't append requirements trace to logfile.");
+            let log_frame = LogFrame {
+                level: record.level(),
+                message: log_content,
+                file: record.file().map(RelativePathBuf::from),
+                line: record.line(),
+            };
+            let log_entry = LogEntry::from(log_frame);
+            let mut content = serde_json::to_string(&log_entry)
+                .expect("Log entry is serializable")
+                .replace("\n", " ");
+            content.push('\n');
 
-        if !mantra_msg {
-            ENV_LOGGER.log(record);
+            let mut opened_file = OpenOptions::new()
+                .append(true)
+                .open(&test_case_logpath)
+                .unwrap_or_else(|_| {
+                    panic!("Couldn't open logfile: {}", test_case_logpath.display())
+                });
+            // Note: `writeln!()` cannot be used here, because concurrent writes to logs may interleave with writing content and newline.
+            // Newline is added to content above
+            write!(opened_file, "{content}",)
+                .expect("Couldn't append requirements trace to logfile.");
+
+            if !mantra_msg {
+                ENV_LOGGER.log(record);
+            }
+        });
+
+        IN_FLIGHT_LOGS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+
+        if let Err(err) = res {
+            panic!("{err:?}");
         }
     }
 
